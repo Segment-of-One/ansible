@@ -613,7 +613,7 @@ class So1(Facts):
     do_not_check_dict = False
     symlinks = []
     unknown_symlinks = []
-    _conf_dict_file = '/home/ansible/so1facter/facts_dict.py'
+    _conf_dict_file = '/home/ansible/so1facter/facts_dict.py' #the static file that would be parsed (on the machine) that can override default_symlinks dictionary
 
     def __init__(self):
         Facts.__init__(self)
