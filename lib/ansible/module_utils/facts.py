@@ -32,6 +32,7 @@ import getpass
 import pwd
 import ConfigParser
 import StringIO
+import codecs
 
 from string import maketrans
 
@@ -604,6 +605,149 @@ class Facts(object):
         for k,v in os.environ.iteritems():
             self.facts['env'][k] = v
 
+
+class So1(Facts):
+    """
+    Gather So1 specific facts
+    """
+    do_not_check_dict = False
+    symlinks = []
+    unknown_symlinks = []
+    _conf_dict_file = '/home/ansible/so1facter/facts_dict.py'
+
+    def __init__(self):
+        Facts.__init__(self)
+
+    def populate(self):
+        self.facts['so1'] = 'so1'
+        self.get_conf_dict()
+        self.get_apps()
+        return self.facts
+
+    # dict should be read from config_dir - will happen when rewrited as module
+    default_symlinks = {
+            'camp': 'campaigns-assembly.jar',
+            'campaigns': 'campaigns-assembly.jar',
+            'campaigns_manager': 'campaigns-manager-assembly.jar',
+            'brand_image': 'brand-image-service-assembly.jar',
+            'frontend_api': 'frontend-api-assembly.jar',
+            'promo': 'promo-cloud-server-assembly.jar',
+            'kiosk_service': 'kiosk-service-assembly.jar',
+            'redis_kafka': 'redis-kafka-transport-assembly.jar',
+            'uba': 'user_basket_aggregator-assembly.jar',
+            'frontend_api': 'frontend_api-assembly.jar',
+            'auditor_service': 'auditor_service-assembly.jar',
+            'auth_service': 'auth_service-assembly.jar',
+            'kiosk_localizer': 'kiosk_localizer_service-assembly.jar',
+            's3fetcher': 's3_fetcher-assembly.jar',
+            'issue_process': 'issue_process-assembly.jar',
+            'lp': 'loyalty-points-assembly.jar',
+            'reporting_api': 'reporting-api-assembly.jar',
+            'redshift_importer': 'redshift_trigger-assembly.jar'
+            }
+
+    def get_apps(self):
+        app_dir = '/home/'
+        try:
+            home_folders = os.listdir(app_dir)
+            self.facts['so1_dirs_in_home'] = str(home_folders)
+
+            for folder in home_folders:
+                if os.path.isdir(app_dir + folder):
+                    if len(self.get_symlink(app_dir + folder)) > 0:
+                        try:
+                            self.symlinks.append(self.get_symlink(app_dir + folder))
+                        except Exception as e:
+                            self.facts['so1_ex_sym'] = 'Exception symlink %s' % e
+
+            self.facts['so1_symlinks'] = str(self.symlinks)
+            self.facts['so1_unknown_symlinks'] = str(self.unknown_symlinks)
+            self.facts['so1_cwd'] = os.getcwd()
+
+        except Exception as e:
+            self.facts['so1_ex_gv'] = 'Exception get_versions %s' % e
+
+    def get_symlink(self, dirname):
+        symlink_list = []
+        unknown_symlink_list = []
+        dir_list = []
+
+        try:
+            dir_list = os.listdir(dirname)
+        except Exception as e:
+            if self.facts.has_key('so1_ex_perm'):
+                self.facts['so1_ex_perm'] += ';Exception dir_perm  %s' % e
+            else:
+                self.facts['so1_ex_perm'] = 'Exception dir_perm  %s' % e
+
+        ''' There may be more than one symlink - lets take all of them'''
+        for name in dir_list:
+            if name not in (os.curdir, os.pardir):
+                full_name = os.path.join(dirname, name)
+
+                if os.path.islink(full_name):
+                    if name in self.default_symlinks.values() or self.do_not_check_dict:
+                        app_names_in_rundeck = self.map_value_to_key(self.default_symlinks, name)
+                        symlink_list.append({'component': app_names_in_rundeck,
+                                             'jar': name,
+                                             'version': self.get_component_version(os.readlink(full_name)),
+                                             'full_name_path': os.readlink(full_name)})
+                        for app in app_names_in_rundeck:
+                            self.facts['so1_' + app] = self.get_component_version(os.readlink(full_name))
+                    else:
+                        unknown_symlink_list.append({'component': self.map_value_to_key(self.default_symlinks, name),
+                                             'jar': name,
+                                             'version': self.get_component_version(os.readlink(full_name)),
+                                             'full_name_path': os.readlink(full_name)})
+        if len(unknown_symlink_list) > 0:
+            self.unknown_symlinks.append(unknown_symlink_list)
+        return symlink_list
+
+    def get_component_version(self, component_name):
+        """/home/kiosk-service/kiosk_service-0.9.467-assembly.jar"""
+        import re
+        re_version = '[0-9].[0-9].[0-9]+'
+        try:
+            version = re.findall(re_version, component_name)[0]
+        except Exception as e:
+            version = 'exception: %s' % e
+        return version
+
+    def map_value_to_key(self, in_dict, in_value):
+        key_list = []
+
+        if in_value in in_dict.values():
+            for key in in_dict.keys():
+                if in_value == in_dict[key]:
+                    key_list.append(key)
+        else:
+            return key_list
+
+        return key_list
+
+    def get_conf_dict(self):
+        try:
+            f = codecs.open(self._conf_dict_file, 'r', encoding='utf-8')
+            self.default_symlinks = json.load(self.byteify(f))
+            self.facts['so1_facts_dict'] = self.default_symlinks
+        except (OSError,IOError), e:
+            self.facts['so1_facts_dict'] = "error while trying to read %s : %s" % (self._conf_dict_file, str(e))
+            return self.default_symlinks
+        f.close()
+        return self.default_symlinks
+
+    def byteify(self, str_input):
+        if isinstance(str_input, dict):
+            return {self.byteify(key): self.byteify(value)
+                    for key, value in str_input.iteritems()}
+        elif isinstance(str_input, list):
+            return [self.byteify(element) for element in str_input]
+        elif isinstance(str_input, unicode):
+            return str_input.encode('utf-8')
+        else:
+            return str_input
+
+
 class Hardware(Facts):
     """
     This is a generic Hardware subclass of Facts.  This should be further
@@ -633,6 +777,7 @@ class Hardware(Facts):
 
     def populate(self):
         return self.facts
+
 
 class LinuxHardware(Hardware):
     """
@@ -2660,6 +2805,7 @@ def get_file_lines(path):
 def ansible_facts(module):
     facts = {}
     facts.update(Facts().populate())
+    facts.update(So1().populate())
     facts.update(Hardware().populate())
     facts.update(Network(module).populate())
     facts.update(Virtual().populate())
